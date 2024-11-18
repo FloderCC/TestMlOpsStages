@@ -9,7 +9,7 @@ from experiment import run_experiment
 | 656 |  vm-lCPU-lRAM  |       flux      |  10.255.32.81  |      2     |     1GB     |
 """
 
-node_cpus = 8
+node_cpus = 2
 node_ram = "1"
 node_name = "Node 4"
 

@@ -93,21 +93,19 @@ def analyze_data(df: DataFrame, class_name: str) -> dict:
     - dict: Dictionary containing the analysis results.
     """
 
-    dataset_description_header = ["attr_to_inst", "class_ent", "eq_num_attr", "gravity", "inst_to_attr",
-                                  "nr_attr", "nr_bin", "nr_class", "nr_cor_attr", "nr_inst", "nr_norm",
-                                  "nr_outliers", "ns_ratio"]
-
     # Exclude the class column
     df_without_class = df.drop(columns=[class_name])
 
     # Initialize MFE and extract features
-    mfe = MFE(groups=["concept", "general", "info-theory", "statistical"])
+    mfe = MFE(groups=["general"])
     mfe.fit(df_without_class.values, df[class_name].values)
-    ft = mfe.extract()
+    ft_names, ft_values = mfe.extract()
 
-    # Filter the extracted features to include only those in dataset_description_header
-    results = {name: value for name, value in zip(ft[0], ft[1]) if name in dataset_description_header}
+    # Return results as a dictionary
+    results = dict(zip(ft_names, ft_values))
     return results
+
+
 
 
 # stage 4: model tuning
@@ -140,7 +138,7 @@ def tune_models(df: DataFrame, class_name: str) -> dict:
     # Perform grid search for each model
     tuned_models = {}
     for model_name, model in models.items():
-        grid_search = GridSearchCV(model, param_grid[model_name], cv=5)
+        grid_search = GridSearchCV(model, param_grid[model_name], cv=5, n_jobs=-1)
         grid_search.fit(df.drop(columns=[class_name]), df[class_name])
         tuned_models[model_name] = {
             'best_params': grid_search.best_params_,
