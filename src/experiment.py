@@ -6,13 +6,13 @@ from sklearn.model_selection import train_test_split
 from mlops_stages import *
 
 dataset_list = [
-    # ['KPI-KQI', [], 'Service'],  # 165 x 14
+    ['KPI-KQI', [], 'Service'],  # 165 x 14
     ['UNAC', ['file'], 'output'],  # 389 x 23
     ['IoT-APD', ['second'], 'label'],  # 10845 x 17
-    # ['NSR', [], 'slice Type'],  # 31583 x 17
-    # ['DeepSlice', ['no'], 'slice Type'],  # 63167 x 10
-    # ['NSL-KDD', [], 'class'],  # 148517 x 42
-    # ['IoT-DNL', [], 'normality'],  # 477426 x 14
+    ['NSR', [], 'slice Type'],  # 31583 x 17
+    ['DeepSlice', ['no'], 'slice Type'],  # 63167 x 10
+    ['NSL-KDD', [], 'class'],  # 148517 x 42
+    ['IoT-DNL', [], 'normality'],  # 477426 x 14
 ]
 
 def run_experiment(experiment_name: str, node_cpus: str, node_ram: str, node_name: str) -> None:
