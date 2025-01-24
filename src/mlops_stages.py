@@ -1,23 +1,32 @@
+import time
 import warnings
 from typing import Any
 
+import pandas as pd
 from exectimeit import timeit
+from joblib import Parallel, delayed
 from pandas import DataFrame
 from scipy.linalg import LinAlgWarning
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.decomposition import PCA
+from sklearn.ensemble import RandomForestClassifier, IsolationForest
 from sklearn.exceptions import ConvergenceWarning
-from sklearn.linear_model import RidgeClassifier
+from sklearn.feature_selection import VarianceThreshold
+from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import matthews_corrcoef
 from sklearn.model_selection import GridSearchCV
 from sklearn.neural_network import MLPClassifier
-from sklearn.preprocessing import LabelEncoder
-from pymfe.mfe import MFE
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 
-# Suppress only ConvergenceWarning
+# Suppress ConvergenceWarning
 warnings.filterwarnings("ignore", category=ConvergenceWarning)
 warnings.filterwarnings("ignore", category=LinAlgWarning)
 
 global_random_seed = 42
+n_jobs = -1
+
+def setNJobs(new_n_jobs):
+    global n_jobs
+    n_jobs = new_n_jobs
 
 # stage 1: data cleaning
 @timeit.exectime(5)
@@ -48,22 +57,68 @@ def clean_data(df: DataFrame, unuseful_columns: list) -> tuple[DataFrame, int]:
     return df_out, df.shape[0] - df_out.shape[0]
 
 
-# stage 2: data preprocessing
+# # stage 2: data preprocessing v0
+# @timeit.exectime(5)
+# def preprocess_data(df: DataFrame, class_name: str) -> tuple[DataFrame, list[Any]]:
+#     """
+#     Preprocess the dataset by encoding categorical variables and normalizing numerical variables.
+#
+#     Parameters:
+#     - df: DataFrame containing the data.
+#     - class_name: Name of the column representing the class labels.
+#
+#     Returns:
+#     - DataFrame: Preprocessed dataset.
+#     """
+#     df_out = df.copy()
+#
+#     # Encode categorical variables
+#     encoded_columns = []
+#     le = LabelEncoder()
+#     for column in df_out.columns:
+#         if not df_out[column].dtype.kind in ['i', 'f']:
+#             encoded_columns.append(column)
+#             df_out[column] = le.fit_transform(df_out[column].astype(str))
+#
+#     # Separate features and target
+#     X = df_out.drop(columns=[class_name])
+#     y = df_out[class_name]
+#
+#     scaler = StandardScaler()
+#     X_normalized = scaler.fit_transform(X)
+#
+#     # Apply PCA
+#     pca = PCA(n_components=0.95)
+#
+#     X_reduced = pca.fit_transform(X_normalized)
+#
+#     # Combine reduced features with the label
+#     X_reduced_df = pd.DataFrame(X_reduced, columns=[f'PC{i + 1}' for i in range(X_reduced.shape[1])])
+#     final_df = pd.concat([X_reduced_df, y.reset_index(drop=True)], axis=1)
+#
+#     # print(f"Reduced from {X.shape[1]} to {X_reduced.shape[1]} features")
+#
+#     return final_df, encoded_columns
+
+# stage 2: data preprocessing v0
 @timeit.exectime(5)
-def preprocess_data(df: DataFrame) -> tuple[DataFrame, list[Any]]:
+def preprocess_data(df: pd.DataFrame, class_name: str) -> tuple[pd.DataFrame, list[str]]:
     """
-    Preprocess the dataset by encoding categorical variables and normalizing numerical variables.
+    Preprocess the dataset by encoding categorical variables, removing low-variance features,
+    removing outliers using Isolation Forest, and performing PCA for feature extraction.
 
     Parameters:
     - df: DataFrame containing the data.
     - class_name: Name of the column representing the class labels.
 
     Returns:
-    - DataFrame: Preprocessed dataset.
+    - tuple:
+        - DataFrame: Preprocessed dataset.
+        - list[str]: List of encoded categorical columns.
     """
     df_out = df.copy()
 
-    # Encode categorical variables
+    # Step 1: Encode categorical variables
     encoded_columns = []
     le = LabelEncoder()
     for column in df_out.columns:
@@ -71,44 +126,36 @@ def preprocess_data(df: DataFrame) -> tuple[DataFrame, list[Any]]:
             encoded_columns.append(column)
             df_out[column] = le.fit_transform(df_out[column].astype(str))
 
-    # Normalize numerical variables
-    for column in df_out.columns:
-        if df_out[column].dtype == 'float64':
-            df_out[column] = (df_out[column] - df_out[column].mean()) / df_out[column].std()
+    # Step 2: Separate features and target
+    X = df_out.drop(columns=[class_name])
+    y = df_out[class_name]
 
-    return df_out, encoded_columns
+    # Step 3: Remove low-variance features
+    variance_filter = VarianceThreshold(threshold=0.1)  # Threshold can be adjusted
+    X_high_variance = variance_filter.fit_transform(X)
 
+    # Step 4: Remove outliers using Isolation Forest
+    iso_forest = IsolationForest(n_estimators=200, contamination=0.05, random_state=global_random_seed, n_jobs=n_jobs)
+    outliers = iso_forest.fit_predict(X_high_variance)
+    X_no_outliers = X_high_variance[outliers == 1]
+    y_no_outliers = y[outliers == 1]
 
-# stage 3: data analysis
-@timeit.exectime(5)
-def analyze_data(df: DataFrame, class_name: str) -> dict:
-    """
-    Analyze the dataset using the pymfe library
+    # Step 5: Normalize the data
+    scaler = StandardScaler()
+    X_normalized = scaler.fit_transform(X_no_outliers)
 
-    Parameters:
-    - df: DataFrame containing the data.
-    - class_name: Name of the column representing the class labels.
+    # Step 6: Apply PCA
+    pca = PCA(n_components=0.90)  # Retain 95% of variance
+    X_reduced = pca.fit_transform(X_normalized)
 
-    Returns:
-    - dict: Dictionary containing the analysis results.
-    """
+    # Combine reduced features with the label
+    X_reduced_df = pd.DataFrame(X_reduced, columns=[f'PC{i + 1}' for i in range(X_reduced.shape[1])])
+    final_df = pd.concat([X_reduced_df, y_no_outliers.reset_index(drop=True)], axis=1)
 
-    # Exclude the class column
-    df_without_class = df.drop(columns=[class_name])
-
-    # Initialize MFE and extract features
-    mfe = MFE(groups=["general"])
-    mfe.fit(df_without_class.values, df[class_name].values)
-    ft_names, ft_values = mfe.extract()
-
-    # Return results as a dictionary
-    results = dict(zip(ft_names, ft_values))
-    return results
+    return final_df, encoded_columns
 
 
-
-
-# stage 4: model tuning
+# stage 3: model tuning
 @timeit.exectime(3)
 def tune_models(df: DataFrame, class_name: str) -> dict:
     """
@@ -123,14 +170,14 @@ def tune_models(df: DataFrame, class_name: str) -> dict:
     """
 
     models = {
-        'RidgeClassifier': RidgeClassifier(random_state=global_random_seed),
+        'LR': LogisticRegression(random_state=global_random_seed),
         'RandomForest': RandomForestClassifier(random_state=global_random_seed),
         'MLP': MLPClassifier(random_state=global_random_seed),
     }
 
     # Define hyperparameters for grid search
     param_grid = {
-        'RidgeClassifier': {'alpha': [0.1, 1.0, 10.0]},
+        'LR': {'solver': ['saga'], 'penalty': ['l1', 'l2']},
         'RandomForest': {'n_estimators': [50, 100, 200]},
         'MLP': {'hidden_layer_sizes': [(50,), (100,), (200,)]}
     }
@@ -138,7 +185,8 @@ def tune_models(df: DataFrame, class_name: str) -> dict:
     # Perform grid search for each model
     tuned_models = {}
     for model_name, model in models.items():
-        grid_search = GridSearchCV(model, param_grid[model_name], cv=5, n_jobs=-1)
+        print("Tuning model:", model_name, "in", n_jobs, "jobs")
+        grid_search = GridSearchCV(model, param_grid[model_name], cv=5, n_jobs=n_jobs)
         grid_search.fit(df.drop(columns=[class_name]), df[class_name])
         tuned_models[model_name] = {
             'best_params': grid_search.best_params_,
@@ -148,25 +196,18 @@ def tune_models(df: DataFrame, class_name: str) -> dict:
     return tuned_models
 
 
-# stage 5: model evaluation and selection
+# stage 4: model evaluation and selection
 @timeit.exectime(5)
 def evaluate_models(df: DataFrame, class_name: str, tuned_models: dict) -> tuple:
-    """
-    Evaluate the tuned models by calculating the mcc of each model.
-
-    Parameters:
-    - df: DataFrame containing the data.
-    - class_name: Name of the column representing the class labels.
-    - tuned_models: Dictionary containing the best model name and the hyperparameters for the model.
-    """
-    results = {}
-    for model_name, tuned_model in tuned_models.items():
+    def evaluate_model(model_name, tuned_model):
         model = tuned_model['best_model']
         mcc = matthews_corrcoef(df[class_name], model.predict(df.drop(columns=[class_name])))
-        results[model_name] = mcc
+        return model_name, mcc
 
-    # returning th best model's name with its best_params and mcc
-    best_model_name = max(results, key=results.get)
+    results = Parallel(n_jobs=n_jobs)(delayed(evaluate_model)(model_name, tuned_model) for model_name, tuned_model in tuned_models.items())
+    results_dict = dict(results)
+
+    best_model_name = max(results_dict, key=results_dict.get)
     best_model_params = tuned_models[best_model_name]['best_params']
-    best_model_mcc = results[best_model_name]
+    best_model_mcc = results_dict[best_model_name]
     return best_model_name, best_model_params, best_model_mcc
