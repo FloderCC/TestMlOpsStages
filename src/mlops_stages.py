@@ -131,11 +131,11 @@ def preprocess_data(df: pd.DataFrame, class_name: str) -> tuple[pd.DataFrame, li
     y = df_out[class_name]
 
     # Step 3: Remove low-variance features
-    variance_filter = VarianceThreshold(threshold=0.1)  # Threshold can be adjusted
+    variance_filter = VarianceThreshold(threshold=0.2)  # Threshold can be adjusted
     X_high_variance = variance_filter.fit_transform(X)
 
     # Step 4: Remove outliers using Isolation Forest
-    iso_forest = IsolationForest(n_estimators=200, contamination=0.05, random_state=global_random_seed, n_jobs=n_jobs)
+    iso_forest = IsolationForest(n_estimators=500, contamination=0.05, random_state=global_random_seed, n_jobs=n_jobs)
     outliers = iso_forest.fit_predict(X_high_variance)
     X_no_outliers = X_high_variance[outliers == 1]
     y_no_outliers = y[outliers == 1]
